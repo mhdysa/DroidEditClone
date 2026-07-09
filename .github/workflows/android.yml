@@ -1,0 +1,90 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+      - name: Install Expo CLI
+        run: npm install -g expo-cli eas-cli
+
+      - name: Install Expo dependencies
+        run: |
+          npx expo install expo-dev-client
+          npx expo install @react-native-async-storage/async-storage
+          npx expo install expo-file-system
+          npx expo install react-native-syntax-highlighter
+
+      - name: Build Android APK with Expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            npx eas-cli build --platform android --profile preview --non-interactive --wait
+          else
+            npx expo build:android --type apk --no-wait
+          fi
+
+      - name: Wait for build (if using expo build)
+        if: ${{ !env.EXPO_TOKEN }}
+        run: |
+          echo "⏳ Waiting for build to complete..."
+          sleep 180
+
+      - name: Find APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find . -name "*.apk" -type f | head -1)
+          if [ -n "$APK_PATH" ]; then
+            echo "apk_path=$APK_PATH" >> $GITHUB_ENV
+            echo "✅ APK found: $APK_PATH"
+          else
+            echo "⚠️ No APK found"
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidEdit-APK
+          path: |
+            ${{ env.apk_path }}
+            *.apk
+            **/*.apk
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: DroidEdit v1.0.${{ github.run_number }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            ${{ env.apk_path }}
+            *.apk
+            **/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
